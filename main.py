@@ -1,15 +1,15 @@
 from engine import Engine
 from objects import Point
-from agents import Player, Chaser, Runner, RUNNER, CHASER, RUNNER_POSITIONS, CHASER_POSITIONS
+from agents import Player, Chaser, Runner, RUNNER, CHASER, RUNNER_POSITIONS, CHASER_POSITIONS, KILL_REWARD
 from keyboard import make_keyboard_listener
 from random import randint
 from dist import points_on_circle
 from env import VIEW_DIST
 
-engine = Engine(500,500)
+engine = Engine(50,50)
 
 player = Player(CHASER, engine, engine.height/2, engine.width/2)
-agents = [player]
+agents = []
 runners = []
 chasers = []
 
@@ -40,10 +40,18 @@ for agent in agents:
 
 
 def handle_agents(engine):
-    is_alive = False
-    
+    is_runner_alive = False
+    is_chaser_alive = False
+
     for agent in agents:
-        if isinstance(agent, Runner):
+        if agent.id == CHASER:
+            if agent.lifeline <= 0:
+                agent.kill()
+            if not agent.is_dead:
+                is_chaser_alive = True
+
+
+        if agent.id == RUNNER:
             pos = [
                 f"{agent.x},{agent.y}",
                 f"{agent.x},{agent.y-1}",
@@ -58,17 +66,25 @@ def handle_agents(engine):
             
             for pos in pos:
                 if pos in CHASER_POSITIONS and CHASER_POSITIONS[pos]:
-                    agent.kill()
-                    break
+                    if pos in engine.positions_to_object:
+                        temp = [agent for agent in engine.positions_to_object[pos] if agent.id == CHASER]
+                        for chaser in temp:
+                            chaser.lifeline += KILL_REWARD
+                        agent.kill()
+                        break
     
             if not agent.is_dead:
-                is_alive = True
+                is_runner_alive = True
     
         if not agent.is_dead:
             agent.step()
         
-    if not is_alive:
+    if not is_runner_alive or not is_chaser_alive:
         engine.pause()
 
 engine.add_callback(handle_agents)
 engine.render_loop()
+
+print(chasers[0])
+runners.sort(key=lambda a:a.steps, reverse=True)
+chasers.sort(key=lambda a:a.steps, reverse=True)

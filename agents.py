@@ -2,7 +2,7 @@ from objects import Point
 from keyboard import make_keyboard_listener
 from random import randint
 from dist import euclidian, points_on_circle, get_angle_in_radians
-from env import X_WATCHING
+from env import X_WATCHING, KILL_REWARD
 from models import RunnerModule, ChaserModule, format_positions
 
 RUNNER = "runner"
@@ -11,13 +11,28 @@ CHASER = "CHASER"
 CHASER_POSITIONS = {}
 RUNNER_POSITIONS = {}
 
+# runner_module = RunnerModule(X_WATCHING)
+# chaser_module = ChaserModule(X_WATCHING)
+
 class Agent(Point):
     def __init__(self, engine, type, color, x, y):
         self.engine = engine
         self.is_dead = False
+        self.memory = []
+        self.steps = 0
         super().__init__(type, color, x, y)
 
     def kill(self):
+        if f"{self.x},{self.y}" in self.engine.positions_to_object:
+            if len(self.engine.positions_to_object[f"{self.x},{self.y}"]) == 1:
+                del self.engine.positions_to_object[f"{self.x},{self.y}"]
+            else:
+                del self.engine.positions_to_object[f"{self.x},{self.y}"][self]
+
+        if self in self.engine.object_to_position:
+            del self.engine.object_to_position[self]
+
+
         self.set_color("black")
         self.is_dead = True
 
@@ -38,6 +53,9 @@ class Agent(Point):
 
 
     def step(self, x, y):
+        if self.is_dead:
+            raise Exception("This agent is dead")
+        
         pos_key = f"{self.x},{self.y}"
         if self.id == CHASER and pos_key in CHASER_POSITIONS:
             del CHASER_POSITIONS[f"{self.x},{self.y}"]
@@ -61,12 +79,14 @@ class Agent(Point):
         elif self.id == RUNNER:
             RUNNER_POSITIONS[f"{x},{y}"] = True
 
+        self.steps += 1
         return x,y
 
 class Runner(Agent):
     def __init__(self, engine, x, y):
         super().__init__(engine, RUNNER, "blue", x, y)
-        self.module = RunnerModule(X_WATCHING)
+        runner_module = RunnerModule(X_WATCHING)
+        self.module = runner_module
 
     def step(self):
         if self.is_dead:
@@ -74,6 +94,7 @@ class Runner(Agent):
         nearest = self.k_nearest_agents(X_WATCHING)
         nearest = format_positions(nearest, X_WATCHING)
         res = self.module(nearest)[0]
+        self.memory.append(res)
         x = self.x + int(res[0].item())
         y = self.y + int(res[1].item())
         x,y = super().step(x,y)
@@ -81,7 +102,9 @@ class Runner(Agent):
 
 class Chaser(Agent):
     def __init__(self, engine, x, y):
-        self.module = ChaserModule(X_WATCHING)
+        chaser_module = ChaserModule(X_WATCHING)
+        self.module = chaser_module
+        self.lifeline = KILL_REWARD
         super().__init__(engine, CHASER, "red", x, y)
 
     def step(self):
@@ -90,14 +113,17 @@ class Chaser(Agent):
         nearest = self.k_nearest_agents(X_WATCHING)
         nearest = format_positions(nearest, X_WATCHING)
         res = self.module(nearest)[0]
+        self.memory.append(res)
         x = self.x + int(res[0].item())
         y = self.y + int(res[1].item())
         x,y = super().step(x,y)
+        self.lifeline -= 1
         return x,y
         
 class Player(Agent):
     def __init__(self, engine, type, x, y):
         self.keys = make_keyboard_listener("wasd")
+        self.lifeline = 100
         super().__init__(type, engine, "green", x, y)
 
     def step(self):
