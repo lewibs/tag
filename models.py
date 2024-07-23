@@ -3,15 +3,45 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
+
+def format_positions(nearest, watching):
+    while len(nearest) < watching:
+        nearest.append([0,100000000])
+
+    # Flatten the list of [angle, distance] pairs
+    flattened_objects = [item for sublist in nearest for item in sublist]
+
+    # Convert to a PyTorch tensor
+    return torch.tensor([flattened_objects], dtype=torch.float32)
+
 class RunnerModule(nn.Module):
-    def __init__(self):
+    def __init__(self, watching):
         super(RunnerModule, self).__init__()
-        self.fc1 = nn.Linear(784, 128)  # Input layer
-        self.fc2 = nn.Linear(128, 64)   # Hidden layer
-        self.fc3 = nn.Linear(64, 10)    # Output layer
+        self.fc1 = nn.Linear(watching*2, 64)  # Input layer
+        self.fc3 = nn.Linear(64, 2)    # Output layer
 
     def forward(self, x):
         x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
         x = self.fc3(x)
+        
+        # Apply sign function and thresholding
+        x = torch.sign(x)
+        x[x.abs() < 0.5] = 0  # Set small values to 0
+        
+        return x
+    
+class ChaserModule(nn.Module):
+    def __init__(self, watching):
+        super(ChaserModule, self).__init__()
+        self.fc1 = nn.Linear(watching*2, 64)  # Input layer
+        self.fc3 = nn.Linear(64, 2)    # Output layer
+
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = self.fc3(x)
+        
+        # Apply sign function and thresholding
+        x = torch.sign(x)
+        x[x.abs() < 0.5] = 0  # Set small values to 0
+        
         return x

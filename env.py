@@ -1,1 +1,2 @@
 VIEW_DIST = 50
+X_WATCHING = 5

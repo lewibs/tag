@@ -2,6 +2,28 @@ import math
 def euclidian(x1,y1,x2,y2):
     return math.sqrt(math.pow(x2-x1, 2) + math.pow(y2-y1, 2))
 
+def get_angle_in_radians(start, end):
+    """
+    Calculate the angle in radians from start to end.
+
+    Parameters:
+    start (tuple): The starting point (x1, y1).
+    end (tuple): The ending point (x2, y2).
+
+    Returns:
+    float: The angle in radians.
+    """
+    x1, y1 = start
+    x2, y2 = end
+
+    # Calculate the differences
+    dx = x2 - x1
+    dy = y2 - y1
+
+    # Compute the angle in radians
+    angle = math.atan2(dy, dx)
+    
+    return angle
 
 def points_on_circle(cx, cy, radius, num_points=100):
     """

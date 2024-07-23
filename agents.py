@@ -1,8 +1,9 @@
 from objects import Point
 from keyboard import make_keyboard_listener
 from random import randint
-from dist import euclidian, points_on_circle
-import math
+from dist import euclidian, points_on_circle, get_angle_in_radians
+from env import X_WATCHING
+from models import RunnerModule, ChaserModule, format_positions
 
 RUNNER = "runner"
 CHASER = "CHASER"
@@ -22,15 +23,17 @@ class Agent(Point):
 
     def k_nearest_agents(self, x_nearest):
         agent_positions = [[int(v) for v in key.split(",")] for key in (CHASER_POSITIONS.keys() if self.id == RUNNER else RUNNER_POSITIONS.keys())]
-        print(agent_positions)
-        print(self.engine.positions_to_object.keys())
         agent_positions.sort(key=lambda a:euclidian(self.x, self.y, a[0], a[1]))
         objects = []
         for pos in agent_positions[0:x_nearest]:
             if f"{pos[0]},{pos[1]}" in self.engine.positions_to_object:
                 for object in self.engine.positions_to_object[f"{pos[0]},{pos[1]}"]:
                     if object.id == (RUNNER if self.id == CHASER else CHASER):
-                        objects.append(object)
+                        if not object.is_dead:
+                            angle = get_angle_in_radians([self.x, self.y], [object.x, object.y])
+                            dist = euclidian(self.x, self.y, object.x, object.y)
+                            objects.append([angle, dist])
+
         return objects[0:x_nearest]
 
 
@@ -63,24 +66,32 @@ class Agent(Point):
 class Runner(Agent):
     def __init__(self, engine, x, y):
         super().__init__(engine, RUNNER, "blue", x, y)
+        self.module = RunnerModule(X_WATCHING)
 
     def step(self):
         if self.is_dead:
             return
-        x = self.x + randint(-1, 1)
-        y = self.y + randint(-1, 1)
+        nearest = self.k_nearest_agents(X_WATCHING)
+        nearest = format_positions(nearest, X_WATCHING)
+        res = self.module(nearest)[0]
+        x = self.x + int(res[0].item())
+        y = self.y + int(res[1].item())
         x,y = super().step(x,y)
         return x, y
 
 class Chaser(Agent):
     def __init__(self, engine, x, y):
+        self.module = ChaserModule(X_WATCHING)
         super().__init__(engine, CHASER, "red", x, y)
 
     def step(self):
         if self.is_dead:
             return
-        x = self.x + randint(-1, 1)
-        y = self.y + randint(-1, 1)
+        nearest = self.k_nearest_agents(X_WATCHING)
+        nearest = format_positions(nearest, X_WATCHING)
+        res = self.module(nearest)[0]
+        x = self.x + int(res[0].item())
+        y = self.y + int(res[1].item())
         x,y = super().step(x,y)
         return x,y
         
