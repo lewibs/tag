@@ -1,0 +1,1 @@
+VIEW_DIST = 50

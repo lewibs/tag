@@ -1,6 +1,8 @@
 from objects import Point
 from keyboard import make_keyboard_listener
 from random import randint
+from dist import euclidian, points_on_circle
+import math
 
 RUNNER = "runner"
 CHASER = "CHASER"
@@ -18,12 +20,26 @@ class Agent(Point):
         self.set_color("black")
         self.is_dead = True
 
-    def step(self, x, y):
-        if self.id == CHASER:
-            CHASER_POSITIONS[f"{self.x},{self.y}"] = False
-        elif self.id == RUNNER:
-            RUNNER_POSITIONS[f"{self.x},{self.y}"] = False
+    def k_nearest_agents(self, x_nearest):
+        agent_positions = [[int(v) for v in key.split(",")] for key in (CHASER_POSITIONS.keys() if self.id == RUNNER else RUNNER_POSITIONS.keys())]
+        print(agent_positions)
+        print(self.engine.positions_to_object.keys())
+        agent_positions.sort(key=lambda a:euclidian(self.x, self.y, a[0], a[1]))
+        objects = []
+        for pos in agent_positions[0:x_nearest]:
+            if f"{pos[0]},{pos[1]}" in self.engine.positions_to_object:
+                for object in self.engine.positions_to_object[f"{pos[0]},{pos[1]}"]:
+                    if object.id == (RUNNER if self.id == CHASER else CHASER):
+                        objects.append(object)
+        return objects[0:x_nearest]
 
+
+    def step(self, x, y):
+        pos_key = f"{self.x},{self.y}"
+        if self.id == CHASER and pos_key in CHASER_POSITIONS:
+            del CHASER_POSITIONS[f"{self.x},{self.y}"]
+        elif self.id == RUNNER and pos_key in RUNNER_POSITIONS:
+            del RUNNER_POSITIONS[f"{self.x},{self.y}"]
 
         if x < 0:
             x = 0

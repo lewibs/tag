@@ -13,9 +13,12 @@ class Object:
         if self.needs_update:
             self.needs_update = False
             if self.object:
-                self.object.undraw()
+                self.undraw()
             self._remake_object()
             self.object.draw(win)
+
+    def undraw(self):
+        self.object.undraw()
         
 
 class Point(Object):
