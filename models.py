@@ -18,8 +18,8 @@ class RunnerModule(nn.Module):
     def __init__(self, watching):
         super(RunnerModule, self).__init__()
         self.fc1 = nn.Linear(watching*3, watching)  # Input layer
-        self.fc2 = nn.Linear(watching, 10)
-        self.fc3 = nn.Linear(10, 2)    # Output layer
+        self.fc2 = nn.Linear(watching, watching//2)
+        self.fc3 = nn.Linear(watching//2, 2)    # Output layer
 
     def forward(self, x):
         x = self.fc1(x)
@@ -36,8 +36,8 @@ class ChaserModule(nn.Module):
     def __init__(self, watching):
         super(ChaserModule, self).__init__()
         self.fc1 = nn.Linear(watching*3, watching)  # Input layer
-        self.fc2 = nn.Linear(watching, 10)
-        self.fc3 = nn.Linear(10, 2)    # Output layer
+        self.fc2 = nn.Linear(watching, watching//2)
+        self.fc3 = nn.Linear(watching//2, 2)    # Output layer
 
     def forward(self, x):
         x = self.fc1(x)

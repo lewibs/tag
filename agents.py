@@ -2,7 +2,7 @@ from objects import Point
 from keyboard import make_keyboard_listener
 from random import randint
 from dist import euclidian, points_on_circle, get_angle_in_radians
-from env import X_WATCHING, KILL_REWARD, VIEW_DIST
+from env import X_WATCHING, KILL_REWARD, VIEW_DIST, MUTATION
 from models import RunnerModule, ChaserModule, format_positions
 import torch
 import torch.nn as nn
@@ -30,7 +30,8 @@ class Agent(Point):
         if self.model:
             torch.save(self.model.state_dict(), name)
 
-    def load_weights(self, weights=None, std=0.01):
+    def load_weights(self, weights=None):
+        std = MUTATION
         if weights:
             # Make a copy of the provided weights
             copied_weights = copy.deepcopy(weights)
@@ -47,11 +48,11 @@ class Agent(Point):
         if f"{self.x},{self.y}" in self.engine.positions_to_object:
             if len(self.engine.positions_to_object[f"{self.x},{self.y}"]) == 1:
                 del self.engine.positions_to_object[f"{self.x},{self.y}"]
-                if self.id == RUNNER:
+                if self.id == RUNNER and f"{self.x},{self.y}" in RUNNER_POSITIONS:
                     RUNNER_POSITIONS[f"{self.x},{self.y}"] -= 1
                     if RUNNER_POSITIONS[f"{self.x},{self.y}"] == 0:
                         del RUNNER_POSITIONS[f"{self.x},{self.y}"]
-                elif self.id == CHASER:
+                elif self.id == CHASER and f"{self.x},{self.y}" in CHASER_POSITIONS:
                     CHASER_POSITIONS[f"{self.x},{self.y}"] -= 1
                     if CHASER_POSITIONS[f"{self.x},{self.y}"] == 0:
                         del CHASER_POSITIONS[f"{self.x},{self.y}"]
@@ -59,11 +60,11 @@ class Agent(Point):
                 del self.engine.positions_to_object[f"{self.x},{self.y}"][self]
                 if all([agent.id != self.id for agent in self.engine.positions_to_object[f"{self.x},{self.y}"]]):
                     # here we remove it from its own list of locations
-                    if self.id == RUNNER:
+                    if self.id == RUNNER and f"{self.x},{self.y}" in RUNNER_POSITIONS:
                         RUNNER_POSITIONS[f"{self.x},{self.y}"] -= 1
                         if RUNNER_POSITIONS[f"{self.x},{self.y}"] == 0:
                             del RUNNER_POSITIONS[f"{self.x},{self.y}"]
-                    elif self.id == CHASER:
+                    elif self.id == CHASER and f"{self.x},{self.y}" in CHASER_POSITIONS:
                         CHASER_POSITIONS[f"{self.x},{self.y}"] -= 1
                         if CHASER_POSITIONS[f"{self.x},{self.y}"] == 0:
                             del CHASER_POSITIONS[f"{self.x},{self.y}"]
@@ -90,13 +91,15 @@ class Agent(Point):
             data = [int(v) for v in key.split(",")]
             key = BAD_KEY if self.id == RUNNER else NEUTRAL_KEY
             data.insert(0, key)
-            points.append(data)
+            if key != NEUTRAL_KEY:
+                points.append(data)
 
         for key in RUNNER_POSITIONS.keys():
             data = [int(v) for v in key.split(",")]
             key = NEUTRAL_KEY if self.id == CHASER else GOOD_KEY
             data.insert(0, key)
-            points.append(data)
+            if key != NEUTRAL_KEY:
+                points.append(data)
 
         objects = []
         for pos in points:

@@ -34,15 +34,16 @@ def run_game(player=None, runner_genetics=None, chaser_genetics=None):
     else:
         chaser_weights = [None]
 
-    for i in range(PLAYERS):
-        runner_weight = random.choice(runner_weights)
+    for i in range(PLAYERS//4):
         chaser_weight = random.choice(chaser_weights)
-
         chaser = Chaser(engine, randint(0, engine.height), randint(0, engine.width), chaser_weight)
         chasers.append(chaser)
+        agents.append(chaser)
+
+    for i in range(PLAYERS):
+        runner_weight = random.choice(runner_weights)
         runner = Runner(engine, randint(0, engine.height), randint(0, engine.width), runner_weight)
         runners.append(runner)
-        agents.append(chaser)
         agents.append(runner)
 
     for agent in agents: 
