@@ -1,8 +1,10 @@
 from graphics import *
 import time
+from env import GAME_SPEED
 
 class Engine:
     def __init__(self, height, width):
+        self.boarder_points = []
         self.running = True
         self.height = height
         self.width = width
@@ -12,6 +14,18 @@ class Engine:
         self.object_to_position = {}
         self.callbacks = []
         self.win = GraphWin(width = self.height, height = self.width)
+
+        for i in range(self.height):
+            #left boarder
+            self.boarder_points.append([0,i])
+            #right boarder
+            self.boarder_points.append([self.width,i])
+
+        for i in range(self.height):
+            #bottom boarder
+            self.boarder_points.append([i,0])
+            #top boarder
+            self.boarder_points.append([i,self.height])
 
     def pause(self):
         #make pause freeze the game
@@ -23,7 +37,7 @@ class Engine:
                 callback(self)
             self.time += 1
             self.draw()
-            time.sleep(0.05)
+            time.sleep(GAME_SPEED)
     
     def add_callback(self, callback):
         self.callbacks.append(callback)
