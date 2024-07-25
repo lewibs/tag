@@ -108,7 +108,7 @@ class Agent(Point):
             if dist <= VIEW_DIST:
                 objects.append([pos[0], angle, dist])
 
-        objects.sort(key=lambda a:euclidian(self.x, self.y, a[1], a[2]))
+        objects.sort(key=lambda a:euclidian(self.x, self.y, a[1], a[2]), reverse=True)
         return objects[0:x_nearest]
 
 

@@ -82,6 +82,22 @@ def run_game(player=None, runner_genetics=None, chaser_genetics=None):
                     f"{agent.x-1},{agent.y+1}",
                     f"{agent.x-1},{agent.y+1}",
                     f"{agent.x},{agent.y+1}",
+                    f"{agent.x},{agent.y-2}",
+                    f"{agent.x+2}{agent.y-2}",
+                    f"{agent.x+2}{agent.y+2}",
+                    f"{agent.x+2},{agent.y}",
+                    f"{agent.x-2},{agent.y}",
+                    f"{agent.x-2},{agent.y+2}",
+                    f"{agent.x-2},{agent.y+2}",
+                    f"{agent.x},{agent.y+2}",
+                    f"{agent.x},{agent.y-3}",
+                    f"{agent.x+3}{agent.y-3}",
+                    f"{agent.x+3}{agent.y+3}",
+                    f"{agent.x+3},{agent.y}",
+                    f"{agent.x-3},{agent.y}",
+                    f"{agent.x-3},{agent.y+3}",
+                    f"{agent.x-3},{agent.y+3}",
+                    f"{agent.x},{agent.y+3}",
                 ]
                 
                 for pos in pos:
@@ -100,8 +116,8 @@ def run_game(player=None, runner_genetics=None, chaser_genetics=None):
     engine.add_callback(handle_agents)
     engine.render_loop()
 
-    chasers.sort(key=lambda a:a.steps, reverse=True)
     runners.sort(key=lambda a:a.steps, reverse=True)
+    chasers.sort(key=lambda a:a.lifeline+a.steps*2, reverse=True)
 
     return [chasers[0:TAKE_X_WINNERS], runners[0:TAKE_X_WINNERS]]
 
