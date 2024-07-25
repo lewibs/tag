@@ -10,6 +10,7 @@ class Engine:
         self.width = width
         self.time = 0
         self.objects = []
+        #TODO remove this? or make it so its not updated in the agent. tehre is repeated information which is silly.
         self.positions_to_object = {}
         self.object_to_position = {}
         self.callbacks = []

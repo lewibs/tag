@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 def format_positions(nearest, watching):
     while len(nearest) < watching:
-        nearest.append([0, 0, 100000000])
+        nearest.append([0, 0])
 
     # Flatten the list of [angle, distance] pairs
     flattened_objects = [item for sublist in nearest for item in sublist]
@@ -17,7 +17,7 @@ def format_positions(nearest, watching):
 class RunnerModule(nn.Module):
     def __init__(self, watching):
         super(RunnerModule, self).__init__()
-        self.fc1 = nn.Linear(watching*3, watching)  # Input layer
+        self.fc1 = nn.Linear(watching*2, watching)  # Input layer
         self.fc2 = nn.Linear(watching, watching//2)
         self.fc3 = nn.Linear(watching//2, 2)    # Output layer
 
@@ -25,17 +25,16 @@ class RunnerModule(nn.Module):
         x = self.fc1(x)
         x = self.fc2(x)
         x = self.fc3(x)
-        
-        # Apply sign function and thresholding
-        x = torch.sign(x)
-        x[x.abs() < 0.5] = 0  # Set small values to 0
+        with torch.no_grad():
+            # Define thresholds
+            x = torch.where(x > 0.5, 1, torch.where(x < -0.5, -1, 0))
         
         return x
     
 class ChaserModule(nn.Module):
     def __init__(self, watching):
         super(ChaserModule, self).__init__()
-        self.fc1 = nn.Linear(watching*3, watching)  # Input layer
+        self.fc1 = nn.Linear(watching*2, watching)  # Input layer
         self.fc2 = nn.Linear(watching, watching//2)
         self.fc3 = nn.Linear(watching//2, 2)    # Output layer
 
@@ -46,6 +45,8 @@ class ChaserModule(nn.Module):
         
         # Apply sign function and thresholding
         x = torch.sign(x)
-        x[x.abs() < 0.5] = 0  # Set small values to 0
+        with torch.no_grad():
+            # Define thresholds
+            x = torch.where(x > 0.5, 1, torch.where(x < -0.5, -1, 0))
         
         return x

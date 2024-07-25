@@ -14,6 +14,35 @@ CHASER = "CHASER"
 CHASER_POSITIONS = {}
 RUNNER_POSITIONS = {}
 
+def add_to_agent_map(pos, agent):
+    if agent.id == CHASER:
+        MAP = CHASER_POSITIONS
+    elif agent.id == RUNNER:
+        MAP = RUNNER_POSITIONS
+    else:
+        return
+
+    if pos not in MAP:
+        MAP[pos] = []
+    MAP[pos].append(agent)
+
+def remove_from_agent_map(pos, agent):
+    if agent.id == CHASER:
+        MAP = CHASER_POSITIONS
+    elif agent.id == RUNNER:
+        MAP = RUNNER_POSITIONS
+    else:
+        return
+    
+    if pos in MAP:
+        if len(MAP[pos]) == 1:
+            del MAP[pos]
+        else:
+            try:
+                MAP[pos].remove(agent)
+            except:
+                print("ran into issue")
+
 # runner_module = RunnerModule(X_WATCHING)
 # chaser_module = ChaserModule(X_WATCHING)
 
@@ -48,31 +77,16 @@ class Agent(Point):
         if f"{self.x},{self.y}" in self.engine.positions_to_object:
             if len(self.engine.positions_to_object[f"{self.x},{self.y}"]) == 1:
                 del self.engine.positions_to_object[f"{self.x},{self.y}"]
-                if self.id == RUNNER and f"{self.x},{self.y}" in RUNNER_POSITIONS:
-                    RUNNER_POSITIONS[f"{self.x},{self.y}"] -= 1
-                    if RUNNER_POSITIONS[f"{self.x},{self.y}"] == 0:
-                        del RUNNER_POSITIONS[f"{self.x},{self.y}"]
-                elif self.id == CHASER and f"{self.x},{self.y}" in CHASER_POSITIONS:
-                    CHASER_POSITIONS[f"{self.x},{self.y}"] -= 1
-                    if CHASER_POSITIONS[f"{self.x},{self.y}"] == 0:
-                        del CHASER_POSITIONS[f"{self.x},{self.y}"]
+                remove_from_agent_map(f"{self.x},{self.y}", self)
             else:
                 del self.engine.positions_to_object[f"{self.x},{self.y}"][self]
                 if all([agent.id != self.id for agent in self.engine.positions_to_object[f"{self.x},{self.y}"]]):
-                    # here we remove it from its own list of locations
-                    if self.id == RUNNER and f"{self.x},{self.y}" in RUNNER_POSITIONS:
-                        RUNNER_POSITIONS[f"{self.x},{self.y}"] -= 1
-                        if RUNNER_POSITIONS[f"{self.x},{self.y}"] == 0:
-                            del RUNNER_POSITIONS[f"{self.x},{self.y}"]
-                    elif self.id == CHASER and f"{self.x},{self.y}" in CHASER_POSITIONS:
-                        CHASER_POSITIONS[f"{self.x},{self.y}"] -= 1
-                        if CHASER_POSITIONS[f"{self.x},{self.y}"] == 0:
-                            del CHASER_POSITIONS[f"{self.x},{self.y}"]
+                    remove_from_agent_map(f"{self.x},{self.y}", self)
 
         if self in self.engine.object_to_position:
             del self.engine.object_to_position[self]
 
-        self.set_color("black")
+        self.set_color("white")
         self.is_dead = True
 
     def k_nearest_agents(self, x_nearest):
@@ -84,8 +98,8 @@ class Agent(Point):
 
         points = []
 
-        for key in self.engine.boarder_points:
-            points.append([BAD_KEY, key[0], key[1]])
+        # for key in self.engine.boarder_points:
+        #     points.append([BAD_KEY, key[0], key[1]])
 
         for key in CHASER_POSITIONS.keys():
             data = [int(v) for v in key.split(",")]
@@ -106,9 +120,9 @@ class Agent(Point):
             angle = get_angle_in_radians([self.x, self.y], [pos[1], pos[2]])
             dist = euclidian(self.x, self.y, pos[1], pos[2])
             if dist <= VIEW_DIST:
-                objects.append([pos[0], angle, dist])
+                objects.append([angle, dist*pos[0]])
 
-        objects.sort(key=lambda a:euclidian(self.x, self.y, a[1], a[2]), reverse=True)
+        objects.sort(key=lambda a:a[1], reverse=True)
         return objects[0:x_nearest]
 
 
@@ -117,11 +131,7 @@ class Agent(Point):
             raise Exception("This agent is dead")
         
         pos_key = f"{self.x},{self.y}"
-        #TODO this is a bug, because if there is more then one item here it will make the second disapear
-        if self.id == CHASER and pos_key in CHASER_POSITIONS:
-            del CHASER_POSITIONS[f"{self.x},{self.y}"]
-        elif self.id == RUNNER and pos_key in RUNNER_POSITIONS:
-            del RUNNER_POSITIONS[f"{self.x},{self.y}"]
+        remove_from_agent_map(pos_key, self)
 
         if x < 0:
             x = 0
@@ -135,14 +145,7 @@ class Agent(Point):
 
         self.set_position(x,y)
         pos = f"{x},{y}" 
-        if self.id == CHASER:
-            if pos not in CHASER_POSITIONS:
-                CHASER_POSITIONS[pos] = 0
-            CHASER_POSITIONS[pos]+=1
-        elif self.id == RUNNER:
-            if pos not in RUNNER_POSITIONS:
-                RUNNER_POSITIONS[pos] = 0
-            RUNNER_POSITIONS[pos]+=1
+        add_to_agent_map(pos, self)
 
         self.steps += 1
         return x,y
