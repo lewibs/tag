@@ -1,22 +1,24 @@
 import pygame
-from enum import Enum
+from env import TIME_LIMIT, GAME_SPEED
 
 class Engine:
-    def __init__(self, w=500, h=500, time_limit=6, game_speed=40):
+    def __init__(self, w=500, h=500, time_limit=TIME_LIMIT, game_speed=GAME_SPEED):
         pygame.init()  # Initialize pygame
         self.w = w
         self.h = h
         self.game_speed = game_speed
-        self.time_limit = time_limit * 1000  # Convert to milliseconds
+        self.time_limit = time_limit
         self.display = pygame.display.set_mode((self.w, self.h))
         self.clock = pygame.time.Clock()
         self.objects = []
+        self.n_games = 1
         self.reset()
 
     def reset(self):
         self.objects = []
         self.clock = pygame.time.Clock()
         self.start_time = pygame.time.get_ticks()  # Reset start time
+        self.n_games += 1
 
     def add(self, object):
         self.objects.append(object)
@@ -29,7 +31,7 @@ class Engine:
     
     def update_memories(self):
         for object in self.objects:
-            object.remember(self, 1)
+            object.remember(self)
     
     def train(self):
         for object in self.objects:

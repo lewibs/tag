@@ -5,34 +5,48 @@ from collections import deque
 from enum import Enum
 from pynput import keyboard
 import torch
-from env import MEMORY, K_WATCHING, DEVICE
+from env import MEMORY, K_WATCHING, DEVICE, BATCH, TRAINING_GAMES, MIN_EPSILON, START_EPSILON
 from models import ChaserModule, RunnerModule
+
+def get_epsilon_linear(n_games):
+    epsilon_decay = (START_EPSILON - MIN_EPSILON) / TRAINING_GAMES
+    return max(MIN_EPSILON, START_EPSILON - epsilon_decay * n_games)
+
+def random_action(game_state):
+    return torch.tensor([[random.randint(-1, 1), random.randint(-1, 1)]], dtype=torch.float32, device=DEVICE)
 
 class Agent:
     def __init__(self, color, size, start_pos):
         self.size = size
         self.color = color
         self.position = start_pos
-        self.epsilon = 0
-        self.n_games = 0
-        self.gamma = 0
+        self.is_alive = True
         self.memory = deque(maxlen=MEMORY)
         self.action = []
-        self.model = lambda game_state:torch.tensor([[random.randint(0, 1), random.randint(0, 1)]], dtype=torch.float32, device=DEVICE)
+        self.model = random_action
 
     def draw(self, display):
         # Draw a red rectangle at position (50, 50) with width 100 and height 100
         pygame.draw.circle(display, self.color, self.position, self.size)
 
-    def remember(self, engine, reward):
+    def remember(self, engine):
+        reward = self.reward(engine)
         self.action.append(reward)
         self.action.append(self.game_state(engine))
         # state, action, reward, next_state, done?
         self.memory.append(self.action)
         self.action = []
 
+    def reward(self, engine):
+        return torch.tensor(1)
+
     def train(self):
-        print(self.memory)
+        if len(self.memory) > BATCH:
+            sample = random.sample(self.memory, BATCH)
+        else:
+            sample = self.memory
+
+        states, action, rewards, next_states = zip(*sample)
 
     def game_state(self, engine):
         other_objects = []
@@ -52,8 +66,16 @@ class Agent:
         return torch.tensor([game_state], dtype=torch.float32, device=DEVICE)
 
     def step(self, engine): #TODO reward score
-        action = self.model(self.game_state(engine))
-        self.action.append(self.game_state(engine))
+        game_state = self.game_state(engine)
+        epsilon = get_epsilon_linear(engine.n_games)
+        random_float = random.random()
+
+        if  random_float < epsilon:
+            action = random_action(game_state)
+        else:
+            action = self.model(self.game_state(engine))
+
+        self.action.append(game_state)
         self.action.append(action)
         new_x = self.position[0] + action[0][0].item()
         new_y = self.position[1] + action[0][1].item()
@@ -138,8 +160,14 @@ class Runner(Agent):
     def __init__(self, color, size, start_pos):
         super().__init__(color, size, start_pos)
         self.model = RunnerModule()
+
+    def reward(self, engine):
+        return self.game_state(engine)[0][5]
     
 class Chaser(Agent):
     def __init__(self, color, size, start_pos):
         super().__init__(color, size, start_pos)
-        self.model = RunnerModule()
+        self.model = ChaserModule()
+
+    def reward(self, engine):
+        return -self.game_state(engine)[0][5]
