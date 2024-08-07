@@ -1,86 +1,62 @@
-from graphics import *
-import time
-from env import GAME_SPEED
+import pygame
+from enum import Enum
 
 class Engine:
-    def __init__(self, height, width):
-        self.boarder_points = []
-        self.running = True
-        self.height = height
-        self.width = width
-        self.time = 0
+    def __init__(self, w=500, h=500, time_limit=6, game_speed=40):
+        pygame.init()  # Initialize pygame
+        self.w = w
+        self.h = h
+        self.game_speed = game_speed
+        self.time_limit = time_limit * 1000  # Convert to milliseconds
+        self.display = pygame.display.set_mode((self.w, self.h))
+        self.clock = pygame.time.Clock()
         self.objects = []
-        #TODO remove this? or make it so its not updated in the agent. tehre is repeated information which is silly.
-        self.positions_to_object = {}
-        self.object_to_position = {}
-        self.callbacks = []
-        self.win = GraphWin(width = self.height, height = self.width)
+        self.reset()
 
-        for i in range(self.height):
-            #left boarder
-            self.boarder_points.append([0,i])
-            #right boarder
-            self.boarder_points.append([self.width,i])
+    def reset(self):
+        self.objects = []
+        self.clock = pygame.time.Clock()
+        self.start_time = pygame.time.get_ticks()  # Reset start time
 
-        for i in range(self.height):
-            #bottom boarder
-            self.boarder_points.append([i,0])
-            #top boarder
-            self.boarder_points.append([i,self.height])
-
-    def pause(self):
-        #make pause freeze the game
-        self.running = False
-
-    def render_loop(self):
-        while self.running:
-            for callback in self.callbacks:
-                callback(self)
-            self.time += 1
-            self.draw()
-            time.sleep(GAME_SPEED)
-    
-    def add_callback(self, callback):
-        self.callbacks.append(callback)
-        
-    def add_object(self, object):
+    def add(self, object):
         self.objects.append(object)
 
-    def remove_object(self, object):
-        if object in self.objects:
-            self.objects.remove(object)
-        if object in self.object_to_position:
-            pos_old = self.object_to_position[object]
-            # Ensure the old position and object exist in the dictionary before deleting
-            if pos_old in self.positions_to_object:
-                if object in self.positions_to_object[pos_old]:
-                    del self.positions_to_object[pos_old][object]
-                    if len(self.positions_to_object[pos_old]) == 0:
-                        del self.positions_to_object[pos_old]
-        object.undraw()
-        
-
-    def draw(self):
+    def step(self):
         for object in self.objects:
-            if object.needs_update:
-                pos = f"{object.x},{object.y}"
+            object.step(self)
+            
+        self.clock.tick(self.game_speed)
+    
+    def update_memories(self):
+        for object in self.objects:
+            object.remember(self, 1)
+    
+    def train(self):
+        for object in self.objects:
+            object.train()
 
+    def render(self):
+        # Clear the screen with a black color
+        self.display.fill((0, 0, 0))
 
-                if object in self.object_to_position:
-                    pos_old = self.object_to_position[object]
-                    # Ensure the old position and object exist in the dictionary before deleting
-                    if pos_old in self.positions_to_object:
-                        if object in self.positions_to_object[pos_old]:
-                            del self.positions_to_object[pos_old][object]
-                            if len(self.positions_to_object[pos_old]) == 0:
-                                del self.positions_to_object[pos_old]
+        for object in self.objects:
+            object.draw(self.display)    
 
-                # Ensure the current position key exists in the dictionary
-                if pos not in self.positions_to_object:
-                    self.positions_to_object[pos] = {}
+        # Update the display
+        pygame.display.flip()
+        
+    def apply_game_logic(self):
+        pass
 
-                self.object_to_position[object] = pos
-                self.positions_to_object[pos][object] = True
-
-            object.draw(self.win)
-
+    def start(self):
+        while (pygame.time.get_ticks() - self.start_time) < self.time_limit:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    return
+            
+            self.step()
+            self.apply_game_logic()
+            self.render()
+            self.update_memories()
+            self.train()
