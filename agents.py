@@ -16,6 +16,12 @@ def get_epsilon_linear(n_games):
 def random_action(game_state):
     return torch.tensor([random.randint(-1, 1), random.randint(-1, 1)], dtype=torch.float32, device=DEVICE)
 
+def no_action(game_state):
+    return torch.tensor([0, 0], dtype=torch.float32, device=DEVICE)
+
+def max_dist(engine):
+    return math.sqrt(engine.h**2+engine.w**2)
+
 class Agent:
     def __init__(self, color, size, start_pos):
         self.size = size
@@ -83,14 +89,14 @@ class Agent:
         for object in engine.objects:
             if object != self:
                 other_objects.append(self.dist_to_object(object))
-
-        game_state = [self.position[0], self.position[1], engine.clock.get_time(), engine.h, engine.w]
+        
+        game_state = [self.position[0] / max_dist(engine), self.position[1] / max_dist(engine)] #engine.clock.get_time(), engine.h, engine.w
         
         other_objects.sort(key=lambda a:a[0])
 
         for object in other_objects[:K_WATCHING]:
-            game_state.append(object[0])
-            game_state.append(object[1])
+            game_state.append(object[0] / max_dist(engine))
+            game_state.append(object[1] / max_dist(engine))
 
         return torch.tensor(game_state, dtype=torch.float32, device=DEVICE)
 
@@ -133,22 +139,23 @@ class Agent:
         return dist < self.size + object.size
     
     def dist_to_object(self, object):
-        self_x, self_y = self.position
-        other_x, other_y = object.position
+        # self_x, self_y = self.position
+        # other_x, other_y = object.position
         
-        # Calculate the Euclidean distance
-        dist_to = math.sqrt((other_x - self_x) ** 2 + (other_y - self_y) ** 2)
+        # # Calculate the Euclidean distance
+        # dist_to = math.sqrt((other_x - self_x) ** 2 + (other_y - self_y) ** 2)
         
-        # Calculate the heading in radians
-        delta_x = other_x - self_x
-        delta_y = other_y - self_y
-        heading_rad = math.atan2(delta_y, delta_x)  # atan2 returns angle in radians
+        # # Calculate the heading in radians
+        # delta_x = other_x - self_x
+        # delta_y = other_y - self_y
+        # heading_rad = math.atan2(delta_y, delta_x)  # atan2 returns angle in radians
         
-        # Convert heading to degrees and normalize to [0, 360)
-        heading_deg = math.degrees(heading_rad)
-        heading_deg = (heading_deg + 360) % 360
+        # # Convert heading to degrees and normalize to [0, 360)
+        # heading_deg = math.degrees(heading_rad)
+        # heading_deg = (heading_deg + 360) % 360
         
-        return [dist_to, heading_deg]
+        # return [dist_to, heading_deg]
+        return [object.position[0], object.position[1]]
 
 class User(Agent):
     def __init__(self, color, size, start_pos):
@@ -194,11 +201,27 @@ class Runner(Agent):
         self.criterion = nn.MSELoss()
 
     def reward(self, engine):
-        if len(self.memory) == 0:
+        if len(self.memory) < 2:
             return torch.tensor(0, dtype=torch.float32, device=DEVICE)
         
-        max_dist = math.sqrt(engine.h ** 2 + engine.w ** 2)
-        return self.game_state(engine)[5] / max_dist
+        dists = []
+        for game_state in list(self.memory)[-2:]:
+            game_state = game_state[0]
+            dist = math.sqrt((game_state[2]-game_state[0])**2 + (game_state[3]-game_state[1])**2)
+            normal_dist = dist
+            dists.append(normal_dist)
+
+        dist_diffs = [dists[i] - dists[i+1] for i in range(len(dists) - 1)]
+        rewards = [-1*min(0, diff) for diff in dist_diffs]
+        reward = sum(rewards)
+
+        return torch.tensor(reward, dtype=torch.float32, device=DEVICE)
+    
+    def step(self, engine): #TODO reward score
+        game_state = self.game_state(engine)
+        action = no_action(engine)
+        self.action.append(game_state)
+        self.action.append(action)
     
 class Chaser(Agent):
     def __init__(self, color, size, start_pos):
@@ -208,7 +231,16 @@ class Chaser(Agent):
         self.criterion = nn.MSELoss()
 
     def reward(self, engine):
-        if len(self.memory) == 0:
+        if len(self.memory) < 2:
             return torch.tensor(0, dtype=torch.float32, device=DEVICE)
-        max_dist = math.sqrt(engine.h ** 2 + engine.w ** 2)
-        return -self.game_state(engine)[5] / max_dist
+        dists = []
+        for game_state in list(self.memory)[-2:]:
+            game_state = game_state[0]
+            dist = math.sqrt((game_state[2]-game_state[0])**2 + (game_state[3]-game_state[1])**2)
+            normal_dist = dist
+            dists.append(normal_dist)
+
+        dist_diffs = [dists[i] - dists[i+1] for i in range(len(dists) - 1)]
+        reward = sum(dist_diffs)
+
+        return torch.tensor(reward, dtype=torch.float32, device=DEVICE)
