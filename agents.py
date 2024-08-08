@@ -1,220 +1,246 @@
-from objects import Point
-from keyboard import make_keyboard_listener
-from random import randint
-from dist import euclidian, points_on_circle, get_angle_in_radians
-from env import X_WATCHING, KILL_REWARD, VIEW_DIST, MUTATION
-from models import RunnerModule, ChaserModule, format_positions
+import pygame
+import math
+import random
+from collections import deque
+from enum import Enum
+from pynput import keyboard
 import torch
-import torch.nn as nn
-import copy
+from torch import nn, optim
+from env import MEMORY, K_WATCHING, DEVICE, BATCH, TRAINING_GAMES, MIN_EPSILON, START_EPSILON, GAMMA, LR
+from models import ChaserModule, RunnerModule
 
-RUNNER = "runner"
-CHASER = "CHASER"
+def get_epsilon_linear(n_games):
+    epsilon_decay = (START_EPSILON - MIN_EPSILON) / TRAINING_GAMES
+    return max(MIN_EPSILON, START_EPSILON - epsilon_decay * n_games)
 
-CHASER_POSITIONS = {}
-RUNNER_POSITIONS = {}
+def random_action(game_state):
+    return torch.tensor([random.randint(-1, 1), random.randint(-1, 1)], dtype=torch.float32, device=DEVICE)
 
-def add_to_agent_map(pos, agent):
-    if agent.id == CHASER:
-        MAP = CHASER_POSITIONS
-    elif agent.id == RUNNER:
-        MAP = RUNNER_POSITIONS
-    else:
-        return
+def no_action(game_state):
+    return torch.tensor([0, 0], dtype=torch.float32, device=DEVICE)
 
-    if pos not in MAP:
-        MAP[pos] = []
-    MAP[pos].append(agent)
+def max_dist(engine):
+    return math.sqrt(engine.h**2+engine.w**2)
 
-def remove_from_agent_map(pos, agent):
-    if agent.id == CHASER:
-        MAP = CHASER_POSITIONS
-    elif agent.id == RUNNER:
-        MAP = RUNNER_POSITIONS
-    else:
-        return
-    
-    if pos in MAP:
-        if len(MAP[pos]) == 1:
-            del MAP[pos]
+class Agent:
+    def __init__(self, color, size, start_pos):
+        self.size = size
+        self.color = color
+        self.position = start_pos
+        self.is_alive = True
+        self.memory = deque(maxlen=MEMORY)
+        self.action = []
+        self.model = random_action
+        self.optimizer = None
+        self.criterion = None
+
+    def draw(self, display):
+        # Draw a red rectangle at position (50, 50) with width 100 and height 100
+        pygame.draw.circle(display, self.color, self.position, self.size)
+
+    def remember(self, engine):
+        reward = self.reward(engine)
+        self.action.append(reward)
+        self.action.append(self.game_state(engine))
+        # state, action, reward, next_state, done?
+        self.memory.append(self.action)
+        self.action = []
+
+    def reward(self, engine):
+        return torch.tensor(1)
+
+    def train(self):
+        if self.optimizer == None or self.criterion == None:
+            return
+
+        if len(self.memory) > BATCH:
+            sample = random.sample(self.memory, BATCH)
         else:
-            try:
-                MAP[pos].remove(agent)
-            except:
-                print("ran into issue")
+            sample = self.memory
 
-# runner_module = RunnerModule(X_WATCHING)
-# chaser_module = ChaserModule(X_WATCHING)
+        state, action, reward, next_state = zip(*sample)
 
-class Agent(Point):
-    def __init__(self, engine, type, color, x, y):
-        self.engine = engine
-        self.is_dead = False
-        self.memory = []
-        self.steps = 0
-        self.model = None
-        super().__init__(type, color, x, y)
+        state = torch.stack(state)
+        action = torch.stack(action)
+        reward = torch.stack(reward)
+        next_state = torch.stack(next_state)
 
-    def save_weights(self, name):
-        if self.model:
-            torch.save(self.model.state_dict(), name)
+        # 1: predicted Q values with current state
+        pred = self.model(state)
 
-    def load_weights(self, weights=None):
-        std = MUTATION
-        if weights:
-            # Make a copy of the provided weights
-            copied_weights = copy.deepcopy(weights)
-            
-            # Load the provided weights into the model
-            self.model.load_state_dict(copied_weights)
-            
-            # Slightly alter the weights
-            with torch.no_grad():
-                for param in self.model.parameters():
-                    param.add_(torch.randn(param.size()) * std)
+        target = pred.clone()
+        for idx in range(len(state)):
+            Q_new = reward[idx] + GAMMA * torch.max(self.model(next_state[idx]))
+            target[idx][torch.argmax(action[idx]).item()] = Q_new
+    
+        # 2: Q_new = r + y * max(next_predicted Q value) -> only do this if not done
+        # pred.clone()
+        # preds[argmax(action)] = Q_new
+        self.optimizer.zero_grad()
+        loss = self.criterion(target, pred)
+        loss.backward()
 
-    def kill(self):
-        if f"{self.x},{self.y}" in self.engine.positions_to_object:
-            if len(self.engine.positions_to_object[f"{self.x},{self.y}"]) == 1:
-                del self.engine.positions_to_object[f"{self.x},{self.y}"]
-                remove_from_agent_map(f"{self.x},{self.y}", self)
-            else:
-                del self.engine.positions_to_object[f"{self.x},{self.y}"][self]
-                if all([agent.id != self.id for agent in self.engine.positions_to_object[f"{self.x},{self.y}"]]):
-                    remove_from_agent_map(f"{self.x},{self.y}", self)
-
-        if self in self.engine.object_to_position:
-            del self.engine.object_to_position[self]
-
-        self.set_color("white")
-        self.is_dead = True
-
-    def k_nearest_agents(self, x_nearest):
-        GOOD_KEY = 1
-        BAD_KEY = -1
-
-        #TODO consider removing all neutral keys to reduce the data that the point needs to consider
-        NEUTRAL_KEY = 0
-
-        points = []
-
-        # for key in self.engine.boarder_points:
-        #     points.append([BAD_KEY, key[0], key[1]])
-
-        for key in CHASER_POSITIONS.keys():
-            data = [int(v) for v in key.split(",")]
-            key = BAD_KEY if self.id == RUNNER else NEUTRAL_KEY
-            data.insert(0, key)
-            if key != NEUTRAL_KEY:
-                points.append(data)
-
-        for key in RUNNER_POSITIONS.keys():
-            data = [int(v) for v in key.split(",")]
-            key = NEUTRAL_KEY if self.id == CHASER else GOOD_KEY
-            data.insert(0, key)
-            if key != NEUTRAL_KEY:
-                points.append(data)
-
-        objects = []
-        for pos in points:
-            angle = get_angle_in_radians([self.x, self.y], [pos[1], pos[2]])
-            dist = euclidian(self.x, self.y, pos[1], pos[2])
-            if dist <= VIEW_DIST:
-                objects.append([angle, dist*pos[0]])
-
-        objects.sort(key=lambda a:a[1], reverse=True)
-        return objects[0:x_nearest]
+        self.optimizer.step()
 
 
-    def step(self, x, y):
-        if self.is_dead:
-            raise Exception("This agent is dead")
+    def game_state(self, engine):
+        other_objects = []
         
-        pos_key = f"{self.x},{self.y}"
-        remove_from_agent_map(pos_key, self)
+        for object in engine.objects:
+            if object != self:
+                other_objects.append(self.dist_to_object(object))
+        
+        game_state = [self.position[0] / max_dist(engine), self.position[1] / max_dist(engine)] #engine.clock.get_time(), engine.h, engine.w
+        
+        other_objects.sort(key=lambda a:a[0])
 
-        if x < 0:
-            x = 0
-        elif x >= self.engine.width:
-            x = self.engine.width - 1
+        for object in other_objects[:K_WATCHING]:
+            game_state.append(object[0] / max_dist(engine))
+            game_state.append(object[1] / max_dist(engine))
 
-        if y < 0:
-            y = 0
-        elif y >= self.engine.height:
-            y = self.engine.height - 1
+        return torch.tensor(game_state, dtype=torch.float32, device=DEVICE)
 
-        self.set_position(x,y)
-        pos = f"{x},{y}" 
-        add_to_agent_map(pos, self)
+    def step(self, engine): #TODO reward score
+        game_state = self.game_state(engine)
+        epsilon = get_epsilon_linear(engine.n_games)
+        random_float = random.random()
 
-        self.steps += 1
-        return x,y
+        if  random_float < epsilon:
+            action = random_action(game_state)
+        else:
+            action = self.model(self.game_state(engine))
+
+        self.action.append(game_state)
+        self.action.append(action)
+
+        new_x = self.position[0] + action[0].item()
+        new_y = self.position[1] + action[1].item()
+
+        if new_x < self.size:
+            new_x = self.size
+        
+        if new_y < self.size:
+            new_y = self.size
+
+        if new_y > engine.h-self.size:
+            new_y = engine.h-self.size
+
+        if new_x > engine.w-self.size:
+            new_x = engine.w-self.size
+
+        self.position = (new_x, new_y)
+        
+    def is_touching(self, object):
+        dist = math.sqrt(
+            math.pow(object.position[0] - self.position[0], 2)+
+            math.pow(object.position[1] - self.position[1], 2)
+        )
+
+        return dist < self.size + object.size
+    
+    def dist_to_object(self, object):
+        # self_x, self_y = self.position
+        # other_x, other_y = object.position
+        
+        # # Calculate the Euclidean distance
+        # dist_to = math.sqrt((other_x - self_x) ** 2 + (other_y - self_y) ** 2)
+        
+        # # Calculate the heading in radians
+        # delta_x = other_x - self_x
+        # delta_y = other_y - self_y
+        # heading_rad = math.atan2(delta_y, delta_x)  # atan2 returns angle in radians
+        
+        # # Convert heading to degrees and normalize to [0, 360)
+        # heading_deg = math.degrees(heading_rad)
+        # heading_deg = (heading_deg + 360) % 360
+        
+        # return [dist_to, heading_deg]
+        return [object.position[0], object.position[1]]
+
+class User(Agent):
+    def __init__(self, color, size, start_pos):
+        super().__init__(color, size, start_pos)
+        self.current_action = (0, 0)
+        self.pressed_keys = set()
+        self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
+        self.listener.start()
+        self.model = lambda game_state:torch.tensor([self.current_action], dtype=torch.float32, device=DEVICE)
+
+    def on_press(self, key):
+        try:
+            self.pressed_keys.add(key.char)
+        except AttributeError:
+            pass  # Handle special keys if needed
+        self.update_action()
+
+    def on_release(self, key):
+        try:
+            self.pressed_keys.discard(key.char)
+        except AttributeError:
+            pass  # Handle special keys if needed
+        self.update_action()
+
+    def update_action(self):
+        action = [0, 0]
+        if 'w' in self.pressed_keys:
+            action[1] = -1
+        if 's' in self.pressed_keys:
+            action[1] = 1
+        if 'a' in self.pressed_keys:
+            action[0] = -1
+        if 'd' in self.pressed_keys:
+            action[0] = 1
+        
+        self.current_action = (action[0], action[1])
 
 class Runner(Agent):
-    def __init__(self, engine, x, y, weights=None):
-        super().__init__(engine, RUNNER, "blue", x, y)
-        runner_model = RunnerModule(X_WATCHING)
-        self.model = runner_model
-        self.load_weights(weights)
+    def __init__(self, color, size, start_pos):
+        super().__init__(color, size, start_pos)
+        self.model = RunnerModule()
+        self.optimizer = optim.Adam(self.model.parameters(), lr=LR)
+        self.criterion = nn.MSELoss()
 
-    def step(self):
-        if self.is_dead:
-            return
-        nearest = self.k_nearest_agents(X_WATCHING)
-        nearest = format_positions(nearest, X_WATCHING)
-        res = self.model(nearest)[0]
-        self.memory.append(res)
-        x = self.x + int(res[0].item())
-        y = self.y + int(res[1].item())
-        x,y = super().step(x,y)
-        return x, y
+    def reward(self, engine):
+        if len(self.memory) < 2:
+            return torch.tensor(0, dtype=torch.float32, device=DEVICE)
+        
+        dists = []
+        for game_state in list(self.memory)[-2:]:
+            game_state = game_state[0]
+            dist = math.sqrt((game_state[2]-game_state[0])**2 + (game_state[3]-game_state[1])**2)
+            normal_dist = dist
+            dists.append(normal_dist)
 
+        dist_diffs = [dists[i] - dists[i+1] for i in range(len(dists) - 1)]
+        rewards = [-1*min(0, diff) for diff in dist_diffs]
+        reward = sum(rewards)
+
+        return torch.tensor(reward, dtype=torch.float32, device=DEVICE)
+    
+    def step(self, engine): #TODO reward score
+        game_state = self.game_state(engine)
+        action = no_action(engine)
+        self.action.append(game_state)
+        self.action.append(action)
+    
 class Chaser(Agent):
-    def __init__(self, engine, x, y, weights=None):
-        super().__init__(engine, CHASER, "red", x, y)
-        chaser_model = ChaserModule(X_WATCHING)
-        self.model = chaser_model
-        self.lifeline = KILL_REWARD
-        self.load_weights(weights)
+    def __init__(self, color, size, start_pos):
+        super().__init__(color, size, start_pos)
+        self.model = ChaserModule()
+        self.optimizer = optim.Adam(self.model.parameters(), lr=LR)
+        self.criterion = nn.MSELoss()
 
-    def step(self):
-        if self.is_dead:
-            return
-        nearest = self.k_nearest_agents(X_WATCHING)
-        nearest = format_positions(nearest, X_WATCHING)
-        res = self.model(nearest)[0]
-        self.memory.append(res)
-        x = self.x + int(res[0].item())
-        y = self.y + int(res[1].item())
-        x,y = super().step(x,y)
-        self.lifeline -= 1
-        return x,y
-        
-class Player(Agent):
-    def __init__(self, engine, type, x, y):
-        self.keys = make_keyboard_listener("wasd")
-        self.lifeline = 100
-        super().__init__(type, engine, "green", x, y)
+    def reward(self, engine):
+        if len(self.memory) < 2:
+            return torch.tensor(0, dtype=torch.float32, device=DEVICE)
+        dists = []
+        for game_state in list(self.memory)[-2:]:
+            game_state = game_state[0]
+            dist = math.sqrt((game_state[2]-game_state[0])**2 + (game_state[3]-game_state[1])**2)
+            normal_dist = dist
+            dists.append(normal_dist)
 
-    def step(self):
-        if self.is_dead:
-            return
+        dist_diffs = [dists[i] - dists[i+1] for i in range(len(dists) - 1)]
+        reward = sum(dist_diffs)
 
-        x = self.x
-        y = self.y
-
-        if self.keys["w"]:
-            y-=1
-        
-        if self.keys["s"]:
-            y+=1
-
-        if self.keys["d"]:
-            x+=1
-
-        if self.keys["a"]:
-            x-=1
-
-        x,y = super().step(x,y)
-
-        return x,y
+        return torch.tensor(reward, dtype=torch.float32, device=DEVICE)
