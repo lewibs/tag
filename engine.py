@@ -1,5 +1,6 @@
 import pygame
 from env import TIME_LIMIT, GAME_SPEED
+import random
 
 class Engine:
     def __init__(self, w=500, h=500, time_limit=TIME_LIMIT, game_speed=GAME_SPEED):
@@ -15,7 +16,8 @@ class Engine:
         self.reset()
 
     def reset(self):
-        self.objects = []
+        for object in self.objects:
+            object.reset((random.randint(0, self.w), random.randint(0, self.h)))
         self.clock = pygame.time.Clock()
         self.start_time = pygame.time.get_ticks()  # Reset start time
         self.n_games += 1

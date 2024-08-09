@@ -20,7 +20,8 @@ def no_action(game_state):
     return torch.tensor([0, 0], dtype=torch.float32, device=DEVICE)
 
 def max_dist(engine):
-    return math.sqrt(engine.h**2+engine.w**2)
+    return 1
+    # return math.sqrt(engine.h**2+engine.w**2)
 
 class Agent:
     def __init__(self, color, size, start_pos):
@@ -33,6 +34,9 @@ class Agent:
         self.model = random_action
         self.optimizer = None
         self.criterion = None
+
+    def reset(self, start_pos):
+        self.position = start_pos
 
     def draw(self, display):
         # Draw a red rectangle at position (50, 50) with width 100 and height 100
@@ -50,7 +54,7 @@ class Agent:
         return torch.tensor(1)
 
     def train(self):
-        if self.optimizer == None or self.criterion == None:
+        if self.optimizer is None or self.criterion is None:
             return
 
         if len(self.memory) > BATCH:
@@ -62,24 +66,24 @@ class Agent:
 
         state = torch.stack(state)
         action = torch.stack(action)
-        reward = torch.stack(reward)
+        reward = torch.tensor(reward).unsqueeze(1)  # reward should have the same batch size
         next_state = torch.stack(next_state)
 
         # 1: predicted Q values with current state
         pred = self.model(state)
 
-        target = pred.clone()
-        for idx in range(len(state)):
-            Q_new = reward[idx] + GAMMA * torch.max(self.model(next_state[idx]))
-            target[idx][torch.argmax(action[idx]).item()] = Q_new
-    
-        # 2: Q_new = r + y * max(next_predicted Q value) -> only do this if not done
-        # pred.clone()
-        # preds[argmax(action)] = Q_new
-        self.optimizer.zero_grad()
-        loss = self.criterion(target, pred)
-        loss.backward()
+        # 2: Q_new = r + γ * max(next_predicted Q value) -> only do this if not done
+        with torch.no_grad():  # No gradient should flow through the target computation
+            next_pred = self.model(next_state)
+            target = pred.clone()
+            for idx in range(len(state)):
+                Q_new = reward[idx] + GAMMA * torch.max(next_pred[idx])
+                target[idx][torch.argmax(action[idx]).item()] = Q_new
 
+        # 3: Backpropagation
+        self.optimizer.zero_grad()
+        loss = self.criterion(pred, target.detach())  # detach the target from the graph
+        loss.backward()
         self.optimizer.step()
 
 
@@ -231,8 +235,28 @@ class Chaser(Agent):
         self.criterion = nn.MSELoss()
 
     def reward(self, engine):
+        # if len(self.memory) < 2:
+        #     return torch.tensor(0, dtype=torch.float32, device=DEVICE)
+        # dists = []
+        # for game_state in list(self.memory)[-2:]:
+        #     game_state = game_state[0]
+        #     dist = math.sqrt((game_state[2]-game_state[0])**2 + (game_state[3]-game_state[1])**2)
+        #     normal_dist = dist
+        #     dists.append(normal_dist)
+
+        # dist_diffs = [dists[i] - dists[i+1] for i in range(len(dists) - 1)]
+
+        # reward = sum(dist_diffs)
+
+        # reward = reward * dists[-1]
+        
+        # reward = 1 / (reward+0.0000001)
+
+        # print(reward)
+
         if len(self.memory) < 2:
             return torch.tensor(0, dtype=torch.float32, device=DEVICE)
+
         dists = []
         for game_state in list(self.memory)[-2:]:
             game_state = game_state[0]
@@ -241,6 +265,16 @@ class Chaser(Agent):
             dists.append(normal_dist)
 
         dist_diffs = [dists[i] - dists[i+1] for i in range(len(dists) - 1)]
-        reward = sum(dist_diffs)
+        diff = sum(dist_diffs)
+        dist = dists[-1]
+        
 
-        return torch.tensor(reward, dtype=torch.float32, device=DEVICE)
+        # Reward should be higher for smaller distances, so take the inverse
+        epsilon = 1e-7  # Small constant to prevent division by zero
+        reward = 1 / (dist + epsilon)
+        print(diff)
+        if diff > 0:
+            print("reward")
+            return torch.tensor(reward, dtype=torch.float32, device=DEVICE)
+        else:
+            return torch.tensor(-1, dtype=torch.float32, device=DEVICE)
