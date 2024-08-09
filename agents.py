@@ -6,11 +6,12 @@ from enum import Enum
 from pynput import keyboard
 import torch
 from torch import nn, optim
-from env import MEMORY, K_WATCHING, DEVICE, BATCH, TRAINING_GAMES, MIN_EPSILON, START_EPSILON, GAMMA, LR
+from env import MEMORY, K_WATCHING, DEVICE, BATCH, TRAINING_GAMES, MIN_EPSILON, START_EPSILON, GAMMA, LR, LEN_GAME_STATE, DECAY_EPSILON
 from models import ChaserModule, RunnerModule
+import time
 
 def get_epsilon_linear(n_games):
-    epsilon_decay = (START_EPSILON - MIN_EPSILON) / TRAINING_GAMES
+    epsilon_decay = DECAY_EPSILON
     return max(MIN_EPSILON, START_EPSILON - epsilon_decay * n_games)
 
 def random_action(game_state):
@@ -20,8 +21,17 @@ def no_action(game_state):
     return torch.tensor([0, 0], dtype=torch.float32, device=DEVICE)
 
 def max_dist(engine):
-    return 1
-    # return math.sqrt(engine.h**2+engine.w**2)
+    # return 1
+    return math.sqrt(engine.h**2+engine.w**2)
+
+def get_direction(radians):
+    # Normalize the angle to be within [0, 2π]
+    radians = radians % (2 * math.pi)
+    # Calculate X and Y offsets using cos and sin
+    x_offset = round(math.cos(radians))
+    y_offset = round(math.sin(radians))
+   
+    return [x_offset, y_offset]
 
 class Agent:
     def __init__(self, color, size, start_pos):
@@ -39,7 +49,6 @@ class Agent:
         self.position = start_pos
 
     def draw(self, display):
-        # Draw a red rectangle at position (50, 50) with width 100 and height 100
         pygame.draw.circle(display, self.color, self.position, self.size)
 
     def remember(self, engine):
@@ -86,23 +95,42 @@ class Agent:
         loss.backward()
         self.optimizer.step()
 
+        # print(self.memory[-1])
+
 
     def game_state(self, engine):
-        other_objects = []
+        game = torch.tensor([
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0]
+        ], dtype=torch.float32, device=DEVICE)
         
+        self_position = [self.position[0] / engine.w, self.position[1] / engine.h]
         for object in engine.objects:
             if object != self:
-                other_objects.append(self.dist_to_object(object))
-        
-        game_state = [self.position[0] / max_dist(engine), self.position[1] / max_dist(engine)] #engine.clock.get_time(), engine.h, engine.w
-        
-        other_objects.sort(key=lambda a:a[0])
+                object_position = [object.position[0] / engine.w, object.position[1] / engine.h]
+                delta_position = [self_position[0] - object_position[0], self_position[1] - object_position[1]] #easier then using radians
 
-        for object in other_objects[:K_WATCHING]:
-            game_state.append(object[0] / max_dist(engine))
-            game_state.append(object[1] / max_dist(engine))
+                if delta_position[0] < -(self.size*1.5/engine.w):
+                    x = 2
+                elif delta_position[0] > (self.size*1.5/engine.w):
+                    x = 0
+                else:
+                    x = 1
 
-        return torch.tensor(game_state, dtype=torch.float32, device=DEVICE)
+                if delta_position[1] < -(self.size*1.5/engine.h):
+                    y = 2
+                elif delta_position[1] > (self.size*1.5/engine.h):
+                    y = 0
+                else:
+                    y = 1
+
+                game[y][x] = 1
+
+        if isinstance(self, Runner):
+            print(game)
+
+        return game.flatten()
 
     def step(self, engine): #TODO reward score
         game_state = self.game_state(engine)
@@ -143,23 +171,18 @@ class Agent:
         return dist < self.size + object.size
     
     def dist_to_object(self, object):
-        # self_x, self_y = self.position
-        # other_x, other_y = object.position
+        self_x, self_y = self.position
+        other_x, other_y = object.position
         
-        # # Calculate the Euclidean distance
-        # dist_to = math.sqrt((other_x - self_x) ** 2 + (other_y - self_y) ** 2)
+        # Calculate the Euclidean distance
+        dist_to = math.sqrt((other_x - self_x) ** 2 + (other_y - self_y) ** 2)
         
-        # # Calculate the heading in radians
-        # delta_x = other_x - self_x
-        # delta_y = other_y - self_y
-        # heading_rad = math.atan2(delta_y, delta_x)  # atan2 returns angle in radians
-        
-        # # Convert heading to degrees and normalize to [0, 360)
-        # heading_deg = math.degrees(heading_rad)
-        # heading_deg = (heading_deg + 360) % 360
-        
-        # return [dist_to, heading_deg]
-        return [object.position[0], object.position[1]]
+        # Calculate the heading in radians
+        delta_x = other_x - self_x
+        delta_y = other_y - self_y
+        heading_rad = math.atan2(delta_y, delta_x)  # atan2 returns angle in radians
+
+        return dist_to, heading_rad
 
 class User(Agent):
     def __init__(self, color, size, start_pos):
@@ -235,46 +258,59 @@ class Chaser(Agent):
         self.criterion = nn.MSELoss()
 
     def reward(self, engine):
-        # if len(self.memory) < 2:
-        #     return torch.tensor(0, dtype=torch.float32, device=DEVICE)
-        # dists = []
-        # for game_state in list(self.memory)[-2:]:
-        #     game_state = game_state[0]
-        #     dist = math.sqrt((game_state[2]-game_state[0])**2 + (game_state[3]-game_state[1])**2)
-        #     normal_dist = dist
-        #     dists.append(normal_dist)
+        #get the x,y position of the target location
+        game_state = self.action[0].clone()
+        index = torch.nonzero(game_state, as_tuple=True)[0].item()
+        target_x = int(index // math.sqrt(LEN_GAME_STATE))
+        target_y = int(index % math.sqrt(LEN_GAME_STATE))
 
-        # dist_diffs = [dists[i] - dists[i+1] for i in range(len(dists) - 1)]
+        #get the models x,y position that it chose
+        game_action = self.action[1].clone()
+        actual_x = int(game_action[0].item())
+        actual_y = int(game_action[1].item())
 
-        # reward = sum(dist_diffs)
-
-        # reward = reward * dists[-1]
-        
-        # reward = 1 / (reward+0.0000001)
-
-        # print(reward)
-
-        if len(self.memory) < 2:
-            return torch.tensor(0, dtype=torch.float32, device=DEVICE)
-
-        dists = []
-        for game_state in list(self.memory)[-2:]:
-            game_state = game_state[0]
-            dist = math.sqrt((game_state[2]-game_state[0])**2 + (game_state[3]-game_state[1])**2)
-            normal_dist = dist
-            dists.append(normal_dist)
-
-        dist_diffs = [dists[i] - dists[i+1] for i in range(len(dists) - 1)]
-        diff = sum(dist_diffs)
-        dist = dists[-1]
-        
-
-        # Reward should be higher for smaller distances, so take the inverse
-        epsilon = 1e-7  # Small constant to prevent division by zero
-        reward = 1 / (dist + epsilon)
-        print(diff)
-        if diff > 0:
-            print("reward")
-            return torch.tensor(reward, dtype=torch.float32, device=DEVICE)
+        if actual_x == 0 and actual_y == 0:
+            reward = 1000
         else:
-            return torch.tensor(-1, dtype=torch.float32, device=DEVICE)
+            reward = -1
+
+        return torch.tensor(reward, dtype=torch.float32, device=DEVICE)
+
+        if game_action[0].item() < -0.25:
+            delta_x = -1
+        elif game_action[0].item() > 0.25:
+            delta_x = 1
+        else:
+            delta_x = 0
+        
+        action_x = 1 + delta_x
+
+        if int(game_action[1].item()) == -1:
+            delta_y = -1
+        elif int(game_action[1].item()) == 1:
+            delta_y = 1
+        else:
+            delta_y = 0
+
+        action_y = 1 + delta_y
+
+        print("reward")
+        print(game_state)
+        print(game_action)
+        print(target_x, target_y)
+        print(action_x, action_y)
+
+        if action_y == 1 and action_x == 1 and target_y == 1 and target_x == 1:
+            reward = 1
+        elif action_y == 1 and action_x == 1:
+            reward = -1
+        else:
+            dist = math.sqrt((target_x-action_x)**2 + (target_y-action_y)**2)
+            ave_dist = math.sqrt((math.sqrt(LEN_GAME_STATE)//2)**2 + (math.sqrt(LEN_GAME_STATE)//2)**2)
+            reward = ave_dist - dist
+
+        print(reward)
+
+        return torch.tensor(reward, dtype=torch.float32, device=DEVICE)
+
+#TODO I think there is a problem, that since the cords are swapped, it will almost always either run away or not find the desired outcome?
