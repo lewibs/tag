@@ -17,7 +17,10 @@ def get_epsilon_linear(n_games):
     return max(MIN_EPSILON, START_EPSILON - epsilon_decay * n_games)
 
 def random_action(game_state):
-    return torch.tensor([random.randint(-1, 1), random.randint(-1, 1)], dtype=torch.float32, device=DEVICE)
+    idx = random.randint(0, 8)
+    action = [0,0,0,0,0,0,0,0,0]
+    action[idx] = 1
+    return torch.tensor(action, dtype=torch.float32, device=DEVICE)
 
 def no_action(game_state):
     return torch.tensor([0, 0], dtype=torch.float32, device=DEVICE)
@@ -131,8 +134,15 @@ class Agent:
         self.action.append(game_state)
         self.action.append(action)
 
-        new_x = self.position[0] + action[0].item()
-        new_y = self.position[1] + action[1].item()
+        max_value, max_idx = torch.max(action, dim=0)
+
+        row = max_idx // 3
+        col = max_idx % 3
+        row -= 1
+        col -= 1
+
+        new_x = self.position[0] + col
+        new_y = self.position[1] + row
 
         if new_x < self.size:
             new_x = self.size
@@ -214,20 +224,21 @@ class Runner(Agent):
         self.criterion = nn.MSELoss()
 
     def reward(self, engine):
-        if len(self.memory) < 2:
-            return torch.tensor(0, dtype=torch.float32, device=DEVICE)
-        
-        dists = []
-        for game_state in list(self.memory)[-2:]:
-            game_state = game_state[0]
-            dist = math.sqrt((game_state[2]-game_state[0])**2 + (game_state[3]-game_state[1])**2)
-            normal_dist = dist
-            dists.append(normal_dist)
+        #get the x,y position of the target location
+        game_state = self.action[0].clone()
+        index = torch.nonzero(game_state, as_tuple=True)[0].item()
+        target_row = (index // 3) - 1
+        target_col = (index % 3) - 1
 
-        dist_diffs = [dists[i] - dists[i+1] for i in range(len(dists) - 1)]
-        rewards = [-1*min(0, diff) for diff in dist_diffs]
-        reward = sum(rewards)
+        #get the models x,y position that it chose
+        game_action = self.action[1].clone()
+        _, acctual_idx = torch.max(game_action, dim=0)
+        actual_row = (acctual_idx // 3) - 1
+        actual_col = (acctual_idx % 3) - 1
 
+        reward = math.sqrt((actual_col-target_col)**2+(actual_row-target_row)**2) -1
+
+        chaser_reward.append(reward)
         return torch.tensor(reward, dtype=torch.float32, device=DEVICE)
     
     def step(self, engine): #TODO reward score
@@ -247,24 +258,19 @@ class Chaser(Agent):
         #get the x,y position of the target location
         game_state = self.action[0].clone()
         index = torch.nonzero(game_state, as_tuple=True)[0].item()
-        target_row = int(index // math.sqrt(LEN_GAME_STATE))
-        target_col = int(index % math.sqrt(LEN_GAME_STATE))
+
 
         #get the models x,y position that it chose
         game_action = self.action[1].clone()
-        actual_col = int(game_action[0].item()) + 1
-        actual_row = int(game_action[1].item()) + 1
+        # print(game_state)
+        # print(game_action)
+        _, acctual_idx = torch.max(game_action, dim=0)
 
-        if actual_col == 1 and actual_row == 1:
-            chaser_reward.append(100)
-            return torch.tensor(100, dtype=torch.float32, device=DEVICE)
+        if acctual_idx == index:
+            reward = 10
         else:
-            chaser_reward.append(-1)
-            return torch.tensor(-1, dtype=torch.float32, device=DEVICE)
+            reward = -1
 
-        diff_col = abs(actual_col - target_col)
-        diff_row = abs(actual_row - target_row)
-        reward = (diff_col + diff_row) - 2
         chaser_reward.append(reward)
         return torch.tensor(reward, dtype=torch.float32, device=DEVICE)
 
