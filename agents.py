@@ -10,6 +10,8 @@ from env import MEMORY, K_WATCHING, DEVICE, BATCH, TRAINING_GAMES, MIN_EPSILON, 
 from models import ChaserModule, RunnerModule
 import time
 
+chaser_reward = []
+
 def get_epsilon_linear(n_games):
     epsilon_decay = DECAY_EPSILON
     return max(MIN_EPSILON, START_EPSILON - epsilon_decay * n_games)
@@ -19,19 +21,6 @@ def random_action(game_state):
 
 def no_action(game_state):
     return torch.tensor([0, 0], dtype=torch.float32, device=DEVICE)
-
-def max_dist(engine):
-    # return 1
-    return math.sqrt(engine.h**2+engine.w**2)
-
-def get_direction(radians):
-    # Normalize the angle to be within [0, 2π]
-    radians = radians % (2 * math.pi)
-    # Calculate X and Y offsets using cos and sin
-    x_offset = round(math.cos(radians))
-    y_offset = round(math.sin(radians))
-   
-    return [x_offset, y_offset]
 
 class Agent:
     def __init__(self, color, size, start_pos):
@@ -127,9 +116,6 @@ class Agent:
 
                 game[y][x] = 1
 
-        if isinstance(self, Runner):
-            print(game)
-
         return game.flatten()
 
     def step(self, engine): #TODO reward score
@@ -191,7 +177,7 @@ class User(Agent):
         self.pressed_keys = set()
         self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
         self.listener.start()
-        self.model = lambda game_state:torch.tensor([self.current_action], dtype=torch.float32, device=DEVICE)
+        self.model = None
 
     def on_press(self, key):
         try:
@@ -261,56 +247,25 @@ class Chaser(Agent):
         #get the x,y position of the target location
         game_state = self.action[0].clone()
         index = torch.nonzero(game_state, as_tuple=True)[0].item()
-        target_x = int(index // math.sqrt(LEN_GAME_STATE))
-        target_y = int(index % math.sqrt(LEN_GAME_STATE))
+        target_row = int(index // math.sqrt(LEN_GAME_STATE))
+        target_col = int(index % math.sqrt(LEN_GAME_STATE))
 
         #get the models x,y position that it chose
         game_action = self.action[1].clone()
-        actual_x = int(game_action[0].item())
-        actual_y = int(game_action[1].item())
+        actual_col = int(game_action[0].item()) + 1
+        actual_row = int(game_action[1].item()) + 1
 
-        if actual_x == 0 and actual_y == 0:
-            reward = 1000
+        if actual_col == 1 and actual_row == 1:
+            chaser_reward.append(100)
+            return torch.tensor(100, dtype=torch.float32, device=DEVICE)
         else:
-            reward = -1
+            chaser_reward.append(-1)
+            return torch.tensor(-1, dtype=torch.float32, device=DEVICE)
 
-        return torch.tensor(reward, dtype=torch.float32, device=DEVICE)
-
-        if game_action[0].item() < -0.25:
-            delta_x = -1
-        elif game_action[0].item() > 0.25:
-            delta_x = 1
-        else:
-            delta_x = 0
-        
-        action_x = 1 + delta_x
-
-        if int(game_action[1].item()) == -1:
-            delta_y = -1
-        elif int(game_action[1].item()) == 1:
-            delta_y = 1
-        else:
-            delta_y = 0
-
-        action_y = 1 + delta_y
-
-        print("reward")
-        print(game_state)
-        print(game_action)
-        print(target_x, target_y)
-        print(action_x, action_y)
-
-        if action_y == 1 and action_x == 1 and target_y == 1 and target_x == 1:
-            reward = 1
-        elif action_y == 1 and action_x == 1:
-            reward = -1
-        else:
-            dist = math.sqrt((target_x-action_x)**2 + (target_y-action_y)**2)
-            ave_dist = math.sqrt((math.sqrt(LEN_GAME_STATE)//2)**2 + (math.sqrt(LEN_GAME_STATE)//2)**2)
-            reward = ave_dist - dist
-
-        print(reward)
-
+        diff_col = abs(actual_col - target_col)
+        diff_row = abs(actual_row - target_row)
+        reward = (diff_col + diff_row) - 2
+        chaser_reward.append(reward)
         return torch.tensor(reward, dtype=torch.float32, device=DEVICE)
 
 #TODO I think there is a problem, that since the cords are swapped, it will almost always either run away or not find the desired outcome?
