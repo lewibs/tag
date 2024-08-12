@@ -6,21 +6,24 @@ from enum import Enum
 from pynput import keyboard
 import torch
 from torch import nn, optim
-from env import MEMORY, K_WATCHING, DEVICE, BATCH, TRAINING_GAMES, MIN_EPSILON, START_EPSILON, GAMMA, LR
+from env import MEMORY, K_WATCHING, DEVICE, BATCH, TRAINING_GAMES, MIN_EPSILON, START_EPSILON, GAMMA, LR, LEN_GAME_STATE, DECAY_EPSILON
 from models import ChaserModule, RunnerModule
+import time
+
+chaser_reward = []
 
 def get_epsilon_linear(n_games):
-    epsilon_decay = (START_EPSILON - MIN_EPSILON) / TRAINING_GAMES
+    epsilon_decay = DECAY_EPSILON
     return max(MIN_EPSILON, START_EPSILON - epsilon_decay * n_games)
 
 def random_action(game_state):
-    return torch.tensor([random.randint(-1, 1), random.randint(-1, 1)], dtype=torch.float32, device=DEVICE)
+    idx = random.randint(0, 8)
+    action = [0,0,0,0,0,0,0,0,0]
+    action[idx] = 1
+    return torch.tensor(action, dtype=torch.float32, device=DEVICE)
 
 def no_action(game_state):
     return torch.tensor([0, 0], dtype=torch.float32, device=DEVICE)
-
-def max_dist(engine):
-    return math.sqrt(engine.h**2+engine.w**2)
 
 class Agent:
     def __init__(self, color, size, start_pos):
@@ -34,8 +37,10 @@ class Agent:
         self.optimizer = None
         self.criterion = None
 
+    def reset(self, start_pos):
+        self.position = start_pos
+
     def draw(self, display):
-        # Draw a red rectangle at position (50, 50) with width 100 and height 100
         pygame.draw.circle(display, self.color, self.position, self.size)
 
     def remember(self, engine):
@@ -50,7 +55,7 @@ class Agent:
         return torch.tensor(1)
 
     def train(self):
-        if self.optimizer == None or self.criterion == None:
+        if self.optimizer is None or self.criterion is None:
             return
 
         if len(self.memory) > BATCH:
@@ -62,43 +67,59 @@ class Agent:
 
         state = torch.stack(state)
         action = torch.stack(action)
-        reward = torch.stack(reward)
+        reward = torch.tensor(reward).unsqueeze(1)  # reward should have the same batch size
         next_state = torch.stack(next_state)
 
         # 1: predicted Q values with current state
         pred = self.model(state)
 
-        target = pred.clone()
-        for idx in range(len(state)):
-            Q_new = reward[idx] + GAMMA * torch.max(self.model(next_state[idx]))
-            target[idx][torch.argmax(action[idx]).item()] = Q_new
-    
-        # 2: Q_new = r + y * max(next_predicted Q value) -> only do this if not done
-        # pred.clone()
-        # preds[argmax(action)] = Q_new
-        self.optimizer.zero_grad()
-        loss = self.criterion(target, pred)
-        loss.backward()
+        # 2: Q_new = r + γ * max(next_predicted Q value) -> only do this if not done
+        with torch.no_grad():  # No gradient should flow through the target computation
+            next_pred = self.model(next_state)
+            target = pred.clone()
+            for idx in range(len(state)):
+                Q_new = reward[idx] + GAMMA * torch.max(next_pred[idx])
+                target[idx][torch.argmax(action[idx]).item()] = Q_new
 
+        # 3: Backpropagation
+        self.optimizer.zero_grad()
+        loss = self.criterion(pred, target.detach())  # detach the target from the graph
+        loss.backward()
         self.optimizer.step()
+
+        # print(self.memory[-1])
 
 
     def game_state(self, engine):
-        other_objects = []
+        game = torch.tensor([
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0]
+        ], dtype=torch.float32, device=DEVICE)
         
+        self_position = [self.position[0] / engine.w, self.position[1] / engine.h]
         for object in engine.objects:
             if object != self:
-                other_objects.append(self.dist_to_object(object))
-        
-        game_state = [self.position[0] / max_dist(engine), self.position[1] / max_dist(engine)] #engine.clock.get_time(), engine.h, engine.w
-        
-        other_objects.sort(key=lambda a:a[0])
+                object_position = [object.position[0] / engine.w, object.position[1] / engine.h]
+                delta_position = [self_position[0] - object_position[0], self_position[1] - object_position[1]] #easier then using radians
 
-        for object in other_objects[:K_WATCHING]:
-            game_state.append(object[0] / max_dist(engine))
-            game_state.append(object[1] / max_dist(engine))
+                if delta_position[0] < -(self.size*1.5/engine.w):
+                    x = 2
+                elif delta_position[0] > (self.size*1.5/engine.w):
+                    x = 0
+                else:
+                    x = 1
 
-        return torch.tensor(game_state, dtype=torch.float32, device=DEVICE)
+                if delta_position[1] < -(self.size*1.5/engine.h):
+                    y = 2
+                elif delta_position[1] > (self.size*1.5/engine.h):
+                    y = 0
+                else:
+                    y = 1
+
+                game[y][x] = 1
+
+        return game.flatten()
 
     def step(self, engine): #TODO reward score
         game_state = self.game_state(engine)
@@ -113,8 +134,15 @@ class Agent:
         self.action.append(game_state)
         self.action.append(action)
 
-        new_x = self.position[0] + action[0].item()
-        new_y = self.position[1] + action[1].item()
+        max_value, max_idx = torch.max(action, dim=0)
+
+        row = max_idx // 3
+        col = max_idx % 3
+        row -= 1
+        col -= 1
+
+        new_x = self.position[0] + col
+        new_y = self.position[1] + row
 
         if new_x < self.size:
             new_x = self.size
@@ -139,23 +167,18 @@ class Agent:
         return dist < self.size + object.size
     
     def dist_to_object(self, object):
-        # self_x, self_y = self.position
-        # other_x, other_y = object.position
+        self_x, self_y = self.position
+        other_x, other_y = object.position
         
-        # # Calculate the Euclidean distance
-        # dist_to = math.sqrt((other_x - self_x) ** 2 + (other_y - self_y) ** 2)
+        # Calculate the Euclidean distance
+        dist_to = math.sqrt((other_x - self_x) ** 2 + (other_y - self_y) ** 2)
         
-        # # Calculate the heading in radians
-        # delta_x = other_x - self_x
-        # delta_y = other_y - self_y
-        # heading_rad = math.atan2(delta_y, delta_x)  # atan2 returns angle in radians
-        
-        # # Convert heading to degrees and normalize to [0, 360)
-        # heading_deg = math.degrees(heading_rad)
-        # heading_deg = (heading_deg + 360) % 360
-        
-        # return [dist_to, heading_deg]
-        return [object.position[0], object.position[1]]
+        # Calculate the heading in radians
+        delta_x = other_x - self_x
+        delta_y = other_y - self_y
+        heading_rad = math.atan2(delta_y, delta_x)  # atan2 returns angle in radians
+
+        return dist_to, heading_rad
 
 class User(Agent):
     def __init__(self, color, size, start_pos):
@@ -164,7 +187,7 @@ class User(Agent):
         self.pressed_keys = set()
         self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
         self.listener.start()
-        self.model = lambda game_state:torch.tensor([self.current_action], dtype=torch.float32, device=DEVICE)
+        self.model = None
 
     def on_press(self, key):
         try:
@@ -201,20 +224,21 @@ class Runner(Agent):
         self.criterion = nn.MSELoss()
 
     def reward(self, engine):
-        if len(self.memory) < 2:
-            return torch.tensor(0, dtype=torch.float32, device=DEVICE)
-        
-        dists = []
-        for game_state in list(self.memory)[-2:]:
-            game_state = game_state[0]
-            dist = math.sqrt((game_state[2]-game_state[0])**2 + (game_state[3]-game_state[1])**2)
-            normal_dist = dist
-            dists.append(normal_dist)
+        #get the x,y position of the target location
+        game_state = self.action[0].clone()
+        index = torch.nonzero(game_state, as_tuple=True)[0].item()
+        target_row = (index // 3) - 1
+        target_col = (index % 3) - 1
 
-        dist_diffs = [dists[i] - dists[i+1] for i in range(len(dists) - 1)]
-        rewards = [-1*min(0, diff) for diff in dist_diffs]
-        reward = sum(rewards)
+        #get the models x,y position that it chose
+        game_action = self.action[1].clone()
+        _, acctual_idx = torch.max(game_action, dim=0)
+        actual_row = (acctual_idx // 3) - 1
+        actual_col = (acctual_idx % 3) - 1
 
+        reward = math.sqrt((actual_col-target_col)**2+(actual_row-target_row)**2) -1
+
+        chaser_reward.append(reward)
         return torch.tensor(reward, dtype=torch.float32, device=DEVICE)
     
     def step(self, engine): #TODO reward score
@@ -231,16 +255,34 @@ class Chaser(Agent):
         self.criterion = nn.MSELoss()
 
     def reward(self, engine):
-        if len(self.memory) < 2:
-            return torch.tensor(0, dtype=torch.float32, device=DEVICE)
-        dists = []
-        for game_state in list(self.memory)[-2:]:
-            game_state = game_state[0]
-            dist = math.sqrt((game_state[2]-game_state[0])**2 + (game_state[3]-game_state[1])**2)
-            normal_dist = dist
-            dists.append(normal_dist)
+        #get the x,y position of the target location
+        game_state = self.action[0].clone()
+        index = torch.nonzero(game_state, as_tuple=True)[0].item()
 
-        dist_diffs = [dists[i] - dists[i+1] for i in range(len(dists) - 1)]
-        reward = sum(dist_diffs)
 
+        #get the models x,y position that it chose
+        game_action = self.action[1].clone()
+        _, acctual_idx = torch.max(game_action, dim=0)
+
+        print(acctual_idx, index)
+
+        if acctual_idx == index:
+            reward = 15
+        else:
+            reward = -1
+        
+        has_guess = False
+        for item in game_action:
+            if item.item() > 0:
+                has_guess = True
+
+        if has_guess == False:
+            print("no Guess")
+            print(game_state)
+            print(game_action)
+            reward = -10
+
+        chaser_reward.append(reward)
         return torch.tensor(reward, dtype=torch.float32, device=DEVICE)
+
+#TODO I think there is a problem, that since the cords are swapped, it will almost always either run away or not find the desired outcome?
