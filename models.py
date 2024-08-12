@@ -47,8 +47,5 @@ class ChaserModule(nn.Module):
         x = torch.relu(x)
         x = self.fc3(x)
         x = torch.relu(x)
-        
-        # Apply softmax to get a probability distribution
-        # x = torch.softmax(x, dim=1)
 
         return x

@@ -262,14 +262,25 @@ class Chaser(Agent):
 
         #get the models x,y position that it chose
         game_action = self.action[1].clone()
-        # print(game_state)
-        # print(game_action)
         _, acctual_idx = torch.max(game_action, dim=0)
 
+        print(acctual_idx, index)
+
         if acctual_idx == index:
-            reward = 10
+            reward = 15
         else:
             reward = -1
+        
+        has_guess = False
+        for item in game_action:
+            if item.item() > 0:
+                has_guess = True
+
+        if has_guess == False:
+            print("no Guess")
+            print(game_state)
+            print(game_action)
+            reward = -10
 
         chaser_reward.append(reward)
         return torch.tensor(reward, dtype=torch.float32, device=DEVICE)
